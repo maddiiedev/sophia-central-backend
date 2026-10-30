@@ -1,15 +1,15 @@
-sophia-central-backend
+sophis-central-backend
 
 Centralized academic resource and research platform backend.
 
 ## Authentication and onboarding
 
-Sophia Central supports multiple sign-up and sign-in entry points for the onboarding flow:
+Sophis Central supports multiple sign-up and sign-in entry points for the onboarding flow:
 
 - email sign-up and sign-in
-- Google OAuth / Google sign-in
-- Apple sign-in
-- social handle sign-in for platforms such as X, LinkedIn, and Instagram
+- Google OAuth / Google sign-in (Not yet implemented)
+- Apple sign-in (Not yet implemented)
+- social handle sign-in for platforms such as X, LinkedIn, and Instagram (Not yet implemented)
 - onboarding completion after account creation
 
 ### Auth endpoints
@@ -24,10 +24,10 @@ Sophia Central supports multiple sign-up and sign-in entry points for the onboar
 
 ### Account flow
 
-1. New users can sign up with email and password or continue with a social provider.
-2. Social sign-in creates or links an account and returns a JWT.
+1. New users can sign up with email and password.
+2. Sign-in creates or links an account and returns a JWT.
 3. The client completes onboarding to add institution, faculty, department, study level, bio, and social handle.
-4. Once onboarding is complete, the account is marked profile complete and verified.
+4. Once onboarding is complete, the account is marked as profile complete and verified.
 
 ## Stack
 
@@ -36,7 +36,7 @@ Sophia Central supports multiple sign-up and sign-in entry points for the onboar
 - PostgreSQL
 - Redis
 - MinIO
-- OpenAI-compatible AI provider integration
+- Gemini API-compatible AI provider integration
 
 ## Getting started
 
