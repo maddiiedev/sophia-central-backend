@@ -1,136 +1,123 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcryptjs';
-import { UsersService } from '../users/users.service';
-import { LoginDto } from './dto/login.dto';
+import {
+  Body, Controller, Get, NotImplementedException, Post, Req, Res, UseGuards,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { randomBytes } from 'node:crypto';
+import type { Request, Response } from 'express';
+import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
+import { LoginDto } from './dto/login.dto';
 import { SocialSignInDto } from './dto/social-signin.dto';
 import { OnboardingDto } from './dto/onboarding.dto';
+import { RequestPasswordResetDto } from './dto/request-password-reset.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { CsrfGuard } from '../common/guards/csrf.guard';
+import { User } from '../users/entities/user.entity';
 
-export type AuthTokenPayload = {
-  sub: string;
-  email: string;
-  role: string;
-};
+type AuthenticatedRequest = Request & { user: User };
+const ACCESS_COOKIE = 'sophia_access_token';
+const CSRF_COOKIE = 'sophia_csrf_token';
 
-@Injectable()
-export class AuthService {
-  constructor(
-    private readonly usersService: UsersService,
-    private readonly jwtService: JwtService,
-  ) {}
+function cookieOptions() {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const sameSite = (process.env.AUTH_COOKIE_SAME_SITE || (isProduction ? 'none' : 'lax')) as 'lax' | 'strict' | 'none';
+  // No maxAge/expires: authentication is intentionally limited to the browser session.
+  return { httpOnly: true, secure: isProduction, sameSite, path: '/' } as const;
+}
+function csrfCookieOptions() {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const sameSite = (process.env.AUTH_COOKIE_SAME_SITE || (isProduction ? 'none' : 'lax')) as 'lax' | 'strict' | 'none';
+  // Keep the CSRF cookie session-scoped as well so auth state is never restored after the browser session ends.
+  return { httpOnly: false, secure: isProduction, sameSite, path: '/' } as const;
+}
 
-  async register(registerDto: RegisterDto) {
-    const existingUser = await this.usersService.findByEmail(registerDto.email);
-    if (existingUser) {
-      throw new BadRequestException('User already exists');
-    }
+@ApiTags('Authentication')
+@Controller('auth')
+export class AuthController {
+  constructor(private readonly authService: AuthService) {}
 
-    const user = await this.usersService.create({
-      ...registerDto,
-      password: await bcrypt.hash(registerDto.password, 10),
-      authProvider: 'email',
-    });
-
-    return this.buildAuthResponse(user);
+  @Get('csrf')
+  @ApiOperation({ summary: 'Issue a CSRF token for browser cookie authentication' })
+  csrf(@Res({ passthrough: true }) response: Response) {
+    const token = randomBytes(32).toString('hex');
+    response.cookie(CSRF_COOKIE, token, csrfCookieOptions());
+    return { csrfToken: token };
   }
 
-  async login(loginDto: LoginDto) {
-    const user = await this.usersService.findByEmail(loginDto.email);
-    if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    const validPassword = await bcrypt.compare(loginDto.password, user.password || '');
-    if (!validPassword) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    return this.buildAuthResponse(user);
+  @Post('signup')
+  @ApiOperation({ summary: 'Register with email and password' })
+  async signup(@Body() dto: RegisterDto, @Res({ passthrough: true }) response: Response) {
+    const result = await this.authService.register(dto);
+    const csrfToken = this.setSessionCookies(response, result.accessToken);
+    return { user: result.user, csrfToken };
   }
 
-  async socialSignIn(socialDto: SocialSignInDto) {
-    const provider = socialDto.provider.toLowerCase();
-    const allowedProviders = ['google', 'apple', 'twitter', 'linkedin', 'instagram'];
-
-    if (!allowedProviders.includes(provider)) {
-      throw new BadRequestException('Unsupported auth provider');
-    }
-
-    const existingUser = await this.usersService.findByEmail(socialDto.email || `${provider}-unknown@local.dev`);
-
-    if (existingUser) {
-      return this.buildAuthResponse(existingUser);
-    }
-
-    const user = await this.usersService.create({
-      firstName: socialDto.firstName || 'New',
-      lastName: socialDto.lastName || 'User',
-      email: socialDto.email || `${provider}-${Date.now()}@local.dev`,
-      password: await bcrypt.hash(`social-${provider}-${Date.now()}`, 10),
-      authProvider: provider,
-      socialHandle: socialDto.socialHandle,
-      profileImage: socialDto.profileImage,
-      isVerified: true,
-      // optional fields for onboarding
-      institution: socialDto.institution,
-      faculty: socialDto.faculty,
-      department: socialDto.department,
-    });
-
-    return this.buildAuthResponse(user);
+  @Post('login')
+  @ApiOperation({ summary: 'Authenticate with email and password' })
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) response: Response) {
+    const result = await this.authService.login(dto);
+    this.setSessionCookies(response, result.accessToken);
+    return { user: result.user };
   }
 
-  async completeOnboarding(userId: string, onboardingDto: OnboardingDto) {
-    const user = await this.usersService.findOne(userId);
-    if (!user) {
-      throw new BadRequestException('User not found');
-    }
-
-    const updatedUser = await this.usersService.update(userId, {
-      ...onboardingDto,
-      isProfileComplete: true,
-      isVerified: true,
-    });
-
-    return this.buildAuthResponse(updatedUser);
+  @Post('password-reset/request')
+  @ApiOperation({ summary: 'Request password reset instructions without revealing account existence' })
+  requestPasswordReset(@Body() dto: RequestPasswordResetDto) {
+    return this.authService.requestPasswordReset(dto);
   }
 
-  async getCurrentUser(userId: string) {
-    const user = await this.usersService.findOne(userId);
-    if (!user) {
-      throw new BadRequestException('User not found');
-    }
-
-    return { user };
+  @Post('password-reset/confirm')
+  @ApiOperation({ summary: 'Set a new password using a single-use reset token' })
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto);
   }
 
-  private async buildAuthResponse(user: any) {
-    const payload: AuthTokenPayload = {
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-    };
+  @Post('onboarding')
+  @UseGuards(JwtAuthGuard, CsrfGuard)
+  @ApiBearerAuth()
+  async onboarding(@Req() req: AuthenticatedRequest, @Body() dto: OnboardingDto) {
+    const result = await this.authService.completeOnboarding(req.user.id, dto);
+    return { user: result.user };
+  }
 
-    const token = await this.jwtService.signAsync(payload);
+  @Post('logout')
+  @UseGuards(JwtAuthGuard, CsrfGuard)
+  @ApiBearerAuth()
+  logout(@Res({ passthrough: true }) response: Response) {
+    response.clearCookie(ACCESS_COOKIE, { ...cookieOptions(), maxAge: undefined });
+    response.clearCookie(CSRF_COOKIE, { ...csrfCookieOptions(), maxAge: undefined });
+    return { success: true };
+  }
 
-    return {
-      accessToken: token,
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        authProvider: user.authProvider,
-        socialHandle: user.socialHandle,
-        profileImage: user.profileImage,
-        institution: user.institution,
-        department: user.department,
-        faculty: user.faculty,
-        isProfileComplete: user.isProfileComplete,
-        isVerified: user.isVerified,
-      },
-    };
+  @Post('social')
+  @ApiOperation({ summary: 'Social sign-in is disabled until provider-token verification is configured' })
+  socialSignIn(@Body() _dto: SocialSignInDto): never {
+    throw new NotImplementedException('Social sign-in is unavailable until provider-issued identity tokens can be verified');
+  }
+  @Post('google')
+  googleSignIn(@Body() dto: SocialSignInDto): never {
+    if (dto.provider !== 'google') throw new NotImplementedException('Google sign-in requires verified Google identity-token support');
+    throw new NotImplementedException('Google sign-in is disabled until provider-token verification is configured');
+  }
+  @Post('apple')
+  appleSignIn(@Body() dto: SocialSignInDto): never {
+    if (dto.provider !== 'apple') throw new NotImplementedException('Apple sign-in requires verified Apple identity-token support');
+    throw new NotImplementedException('Apple sign-in is disabled until provider-token verification is configured');
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  getMe(@Req() req: AuthenticatedRequest) {
+    const { password: _password, ...safeUser } = req.user;
+    return { user: safeUser };
+  }
+
+  private setSessionCookies(response: Response, accessToken: string): string {
+    const csrfToken = randomBytes(32).toString('hex');
+    response.cookie(ACCESS_COOKIE, accessToken, cookieOptions());
+    response.cookie(CSRF_COOKIE, csrfToken, csrfCookieOptions());
+    return csrfToken;
   }
 }

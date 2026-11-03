@@ -1,38 +1,66 @@
-import { IsEmail, IsIn, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+  Matches,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { SocialLinksDto } from './social-links.dto';
 
-export class SocialSignInDto {
-  @IsIn(['google', 'apple', 'twitter', 'linkedin', 'instagram'])
-  provider: 'google' | 'apple' | 'twitter' | 'linkedin' | 'instagram';
-
-  @IsOptional()
-  @IsEmail()
-  email?: string;
-
-  @IsOptional()
-  @IsString()
-  firstName?: string;
-
-  @IsOptional()
-  @IsString()
-  lastName?: string;
-
+export class OnboardingDto {
   @IsOptional()
   @IsString()
-  socialHandle?: string;
-
-  @IsOptional()
-  @IsString()
-  profileImage?: string;
-
-  @IsOptional()
-  @IsString()
+  @MaxLength(160)
   institution?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(160)
   faculty?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(160)
   department?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  programme?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(160, { each: true })
+  coursesTaught?: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  studyLevel?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  bio?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(30)
+  @Matches(/^[a-zA-Z0-9](?:[a-zA-Z0-9._]*[a-zA-Z0-9])$/, { message: 'Academic handle must start and end with a letter or number and contain only letters, numbers, periods, or underscores' })
+  academicHandle?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  socialHandle?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SocialLinksDto)
+  socialLinks?: SocialLinksDto;
 }

@@ -15,8 +15,11 @@ import { AiModule } from './ai/ai.module';
 import { ReferralModule } from './referral/referral.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { SupportModule } from './support/support.module';
+import { ChatModule } from './chat/chat.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { SentryService } from './common/services/sentry.service';
 
 @Module({
   imports: [
@@ -38,8 +41,10 @@ import { AppService } from './app.service';
     ReferralModule,
     NotificationsModule,
     AnalyticsModule,
+    SupportModule,
+    ChatModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, SentryService],
 })
 export class AppModule {}

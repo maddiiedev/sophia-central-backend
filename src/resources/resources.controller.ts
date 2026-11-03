@@ -6,13 +6,14 @@ import {
   Param,
   Patch,
   Post,
-  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { User } from '../users/entities/user.entity';
+import { User, UserRole } from '../users/entities/user.entity';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { CreateResourceDto } from './dto/create-resource.dto';
 import { UpdateResourceDto } from './dto/update-resource.dto';
 import { ResourcesService } from './resources.service';
@@ -23,27 +24,90 @@ export class ResourcesController {
   constructor(private readonly resourcesService: ResourcesService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.LECTURER)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Create a new resource' })
+  @ApiOperation({ summary: 'Submit a resource for moderation' })
   create(@Body() dto: CreateResourceDto, @CurrentUser() user: User) {
     return this.resourcesService.create(dto, user.id);
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all resources' })
-  findAll() {
-    return this.resourcesService.findAll();
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get resources visible to the authenticated user' })
+  findAll(@CurrentUser() user: User) {
+    return this.resourcesService.findVisibleTo(user);
+  }
+
+  @Get('saved')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List resources saved to the authenticated student or lecturer account' })
+  findSaved(@CurrentUser() user: User) {
+    return this.resourcesService.findSavedForUser(user);
+  }
+
+  @Get('downloaded')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List resources downloaded in-app for the authenticated account' })
+  findDownloaded(@CurrentUser() user: User) {
+    return this.resourcesService.findDownloadedForUser(user);
+  }
+
+  @Post(':id/download')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Record an in-app download in the authenticated account without downloading to the device' })
+  downloadInApp(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.resourcesService.downloadForUser(id, user);
+  }
+
+  @Post(':id/save')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Save an approved resource to the authenticated account without downloading it to the device' })
+  save(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.resourcesService.saveForUser(id, user);
+  }
+
+  @Delete(':id/save')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Remove a resource from the authenticated account saved resources' })
+  unsave(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.resourcesService.removeSavedForUser(id, user);
+  }
+
+  @Get('mine')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.LECTURER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get the authenticated lecturer’s own resource submissions and review statuses' })
+  findMine(@CurrentUser() user: User) {
+    return this.resourcesService.findMine(user.id);
+  }
+
+  @Get(':id/file-url')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get a short-lived URL for an authorized resource file; storage URLs are not returned by resource metadata' })
+  getFileUrl(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.resourcesService.getFileUrl(id, user, false);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get a single resource by id' })
-  findOne(@Param('id') id: string) {
-    return this.resourcesService.findOne(id);
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get a resource the authenticated user is allowed to view' })
+  findOne(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.resourcesService.findOneForViewer(id, user);
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MODERATOR)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update a resource' })
   update(@Param('id') id: string, @Body() dto: UpdateResourceDto) {
@@ -51,7 +115,8 @@ export class ResourcesController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MODERATOR)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete a resource' })
   remove(@Param('id') id: string) {

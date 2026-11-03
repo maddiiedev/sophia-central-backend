@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { PutObjectCommand, S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+
+export interface StoredObjectMetadata {
+  contentLength: number | undefined;
+  contentType: string | undefined;
+}
 
 @Injectable()
 export class S3Service {
@@ -43,21 +48,64 @@ export class S3Service {
       url,
       key,
       bucket: this.bucketName,
-      publicUrl: `${this.publicBaseUrl}/${key}`,
+      publicUrl: this.getPublicUrl(key),
     };
   }
 
-  async checkObjectExists(key: string) {
+  getPublicUrl(key: string): string {
+    return `${this.publicBaseUrl.replace(/\/$/, '')}/${key.split('/').map(encodeURIComponent).join('/')}`;
+  }
+
+  async createPresignedDownloadUrl(key: string, filename?: string, disposition: 'inline' | 'attachment' = 'inline', expiresIn = 300): Promise<string> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucketName,
+      Key: key,
+      ...(filename ? { ResponseContentDisposition: `${disposition}; filename*=UTF-8''${encodeURIComponent(filename)}` } : {}),
+    });
+    return getSignedUrl(this.client, command, { expiresIn });
+  }
+
+  getKeyFromPublicUrl(value: string): string | null {
     try {
-      await this.client.send(
+      const parsed = new URL(value);
+      const base = new URL(this.publicBaseUrl);
+      if (parsed.host !== base.host) return null;
+      const basePath = base.pathname.replace(/\/$/, '');
+      const pathname = decodeURIComponent(parsed.pathname);
+      if (!pathname.startsWith(`${basePath}/`)) return null;
+      const key = pathname.slice(basePath.length + 1);
+      return key && !key.split('/').includes('..') ? key : null;
+    } catch { return null; }
+  }
+
+  async uploadPublicObject(key: string, body: Buffer, contentType: string): Promise<string> {
+    await this.client.send(new PutObjectCommand({
+      Bucket: this.bucketName,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+    }));
+    return this.getPublicUrl(key);
+  }
+
+  async getObjectMetadata(key: string): Promise<StoredObjectMetadata | null> {
+    try {
+      const response = await this.client.send(
         new HeadObjectCommand({
           Bucket: this.bucketName,
           Key: key,
         }),
       );
-      return true;
+      return {
+        contentLength: response.ContentLength,
+        contentType: response.ContentType,
+      };
     } catch {
-      return false;
+      return null;
     }
+  }
+
+  async checkObjectExists(key: string): Promise<boolean> {
+    return (await this.getObjectMetadata(key)) !== null;
   }
 }
